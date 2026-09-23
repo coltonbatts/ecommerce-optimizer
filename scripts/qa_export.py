@@ -365,13 +365,25 @@ def main() -> int:
     csv_path = root / "out" / "listings-export.csv"
     db_path = root / "data" / "optimizer.db"
 
+    # out/ is gitignored, so a fresh clone won't have it.
+    md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(render_md(ready, skipped), encoding="utf-8")
     render_csv(ready, csv_path)
     # The DB mirrors the source of truth, so every validated row syncs —
-    # status only gates what reaches the paste pack.
-    n = sync_db(items, db_path)
+    # status only gates what reaches the paste pack. The DB is gitignored too:
+    # on a fresh clone there is nothing to sync, and the run says so loudly.
+    if db_path.exists():
+        n = sync_db(items, db_path)
+        db_note = f"synced {n} DB rows"
+    else:
+        db_note = "DB NOT SYNCED"
+        print("\n" + "!" * 72)
+        print(f"!! NOTICE: {db_path} not found — skipping the DB sync.")
+        print("!! The paste pack below is still complete. To sync, copy optimizer.db")
+        print("!! over from the main machine (or run `cargo run -- scan`) and re-run.")
+        print("!" * 72)
     print(f"\nAll {len(items)} listings passed. Wrote {md_path.name} + {csv_path.name} "
-          f"with {len(ready)} ready, synced {n} DB rows.")
+          f"with {len(ready)} ready, {db_note}.")
     if skipped:
         print(f"SKIPPED from paste pack: {len(skipped)} ({skipped_summary(skipped)})")
     return 0
