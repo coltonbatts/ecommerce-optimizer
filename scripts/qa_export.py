@@ -379,8 +379,8 @@ def main() -> int:
         db_note = "DB NOT SYNCED"
         print("\n" + "!" * 72)
         print(f"!! NOTICE: {db_path} not found — skipping the DB sync.")
-        print("!! The paste pack below is still complete. To sync, copy optimizer.db")
-        print("!! over from the main machine (or run `cargo run -- scan`) and re-run.")
+        print("!! The paste pack is still written in full. To sync, copy optimizer.db")
+        print("!! over from the main machine and re-run.")
         print("!" * 72)
     print(f"\nAll {len(items)} listings passed. Wrote {md_path.name} + {csv_path.name} "
           f"with {len(ready)} ready, {db_note}.")
