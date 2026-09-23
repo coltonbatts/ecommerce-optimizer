@@ -16,9 +16,10 @@ broken grammar ("it' endorses"), and junk tags ("horror movie movie").
 This gate catches all of those deterministically before anything gets pasted.
 
 Blank specs are now VERIFIED (Bella + Canvas 3001 via Printful, 2026-09-23), so
-material copy is permitted — but only as the exact APPROVED_SPEC block. Any
+material copy is permitted — but only as an exact APPROVED_SPECS block. Any
 other material claim is still an ERROR: the block is the evidence, and it must
-match exactly to stay evidence.
+match exactly to stay evidence. Two size ranges are approved because the blank
+carries both: standard (S-2XL) and extended (XS-5XL, white colorway verified).
 """
 
 import csv
@@ -38,31 +39,40 @@ TAG_LEN_MAX = 20
 FEE_PCT = 0.095
 FEE_FIXED = 0.45
 
-# The one permitted material-copy block. Sourced from Printful's Bella + Canvas
+# The only permitted material-copy blocks. Sourced from Printful's Bella + Canvas
 # 3001 product record (variant names + spec sheet). Exempt from BANNED_CLAIMS
-# below because it is the verification evidence — but it must match byte for
-# byte. Edit it only when re-verified against the source.
-APPROVED_SPEC = (
+# below because they are the verification evidence — but each must match byte
+# for byte. Edit only when re-verified against the source.
+_SPEC_HEAD = (
     "The details:\n"
     "- Bella + Canvas 3001 unisex retail fit with tear-away label\n"
     "- 100% combed and ring-spun cotton (heather colorways: polyester/cotton blend)\n"
     "- 4.2 oz/yd² (142 g/m²), pre-shrunk\n"
     "- Side-seamed construction, shoulder-to-shoulder taping\n"
-    "- Sizes S, M, L, XL, 2XL\n"
+)
+_SPEC_TAIL = (
     "- Blank sourced from Guatemala, Nicaragua, Mexico, Honduras, or the US\n"
     "\n"
     "Lighter colorways are slightly sheer — that is the nature of the fabric."
 )
+APPROVED_SPECS = {
+    "standard": _SPEC_HEAD + "- Sizes S, M, L, XL, 2XL\n" + _SPEC_TAIL,
+    "extended": _SPEC_HEAD + "- Sizes XS to 5XL\n" + _SPEC_TAIL,
+}
 
 # Landed cost model (Printful, measured 2026-09-23): product cost by size plus
 # $4.95 flat-rate US shipping absorbed by the shop.
-#   S-XL $11.92 + 4.95 = $16.87 | 2XL $13.92 + 4.95 = $18.87
+#   XS-XL $11.92 + 4.95 = $16.87 | 2XL $13.92 + 4.95 = $18.87
 #   3XL  $15.92 + 4.95 = $20.87 | 4XL $17.92 + 4.95 = $22.87
+#   5XL  $19.92 + 4.95 = $24.87 (white colorway only)
 # Surcharges hold ~29% margin at the base price across every size.
-SIZE_TIERS = "S-XL base | 2XL +$3 | 3XL +$6 | 4XL +$9"
+SIZE_TIERS = {
+    "standard": "S-XL base | 2XL +$3 | 3XL +$6 | 4XL +$9",
+    "extended": "XS-XL base | 2XL +$3 | 3XL +$6 | 4XL +$9 | 5XL +$12",
+}
 
 # ERROR-level: unverified factual claims about materials, safety, durability,
-# or performance outside the approved spec block. Anything here is a claim we
+# or performance outside the approved spec blocks. Anything here is a claim we
 # cannot evidence.
 BANNED_CLAIMS = [
     r"100\s*%\s*cotton",
@@ -106,6 +116,15 @@ SLOP_PATTERNS = [
 
 def fee_for(price: float) -> float:
     return FEE_PCT * price + FEE_FIXED
+
+
+def size_key(item: dict) -> str:
+    """Which approved spec block an item carries ('standard' if unrecognized)."""
+    spec = item.get("spec", "")
+    for key, text in APPROVED_SPECS.items():
+        if spec == text:
+            return key
+    return "standard"
 
 
 def full_description(item: dict) -> str:
@@ -152,8 +171,8 @@ def validate(item: dict) -> tuple[list[str], list[str]]:
     spec = item.get("spec", "")
     if not spec:
         warnings.append("no spec block — listing carries no material copy")
-    elif spec != APPROVED_SPEC:
-        errors.append("spec block does not match the verified blank specs")
+    elif spec not in APPROVED_SPECS.values():
+        errors.append("spec block does not match a verified blank spec")
 
     # --- claim / IP / slop safety
     for pat in BANNED_CLAIMS:
@@ -184,7 +203,7 @@ def render_md(items: list[dict]) -> str:
         "## Before you paste",
         "1. Paste from the TITLE / TAGS / DESCRIPTION blocks below (description includes the verified spec block).",
         "2. Add your mockup images (4500x5400 designs on the tee mockups).",
-        f"3. Set size pricing per listing in Etsy: {SIZE_TIERS}.",
+        "3. Set size pricing per listing in Etsy using that listing's size line.",
         "",
     ]
     for i, it in enumerate(items, 1):
@@ -193,12 +212,13 @@ def render_md(items: list[dict]) -> str:
         net = price - fee_for(price)
         margin = (net - cost) / price * 100
         tags_line = ", ".join(it["tags"])
+        tiers = SIZE_TIERS[size_key(it)]
         out += [
             f"## {i}. {it['niche']}",
             "",
             f"**Price:** ${price:.2f}  (unit cost ${cost:.2f} → nets ${net:.2f}, {margin:.1f}% margin)",
             f"**Competitor query:** `{it['search_query']}`",
-            f"**Size pricing:** {SIZE_TIERS}",
+            f"**Size pricing:** {tiers}",
             "",
             f"**TITLE** ({len(it['title'])}/{TITLE_MAX}) — click to select, copy, paste",
             "```",
