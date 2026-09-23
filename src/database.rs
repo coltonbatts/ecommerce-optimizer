@@ -161,17 +161,14 @@ impl Database {
     }
 
     fn ensure_column(&self, table: &str, column: &str, decl: &str) -> DbResult<()> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("PRAGMA table_info({table})"))?;
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
         let existing: Vec<String> = stmt
             .query_map(params![], |row| row.get::<_, String>(1))?
             .collect::<DbResult<Vec<String>>>()?;
         drop(stmt);
         if !existing.iter().any(|c| c == column) {
-            self.conn.execute_batch(&format!(
-                "ALTER TABLE {table} ADD COLUMN {column} {decl}"
-            ))?;
+            self.conn
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
         }
         Ok(())
     }

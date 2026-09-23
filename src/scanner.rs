@@ -150,7 +150,7 @@ async fn etsy_search(
         return Err(format!(
             "HTTP {} — {}",
             status.as_u16(),
-            body.chars().take(200).collect::<String>()
+            body.trim().chars().take(200).collect::<String>()
         ));
     }
 
@@ -274,6 +274,64 @@ fn titlecase(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// ---------------------------------------------------------------- key check
+
+#[derive(Debug, Deserialize)]
+struct PingResponse {
+    #[serde(default)]
+    application_id: i64,
+}
+
+/// Verify a marketplace API key against Etsy's ping endpoint. No OAuth needed —
+/// this is the cheapest way to answer "is my key actually live?".
+pub async fn verify_api_key(config: &Config) -> Result<i64, String> {
+    let key = config.api_keys.marketplace.trim().to_string();
+    if key.is_empty() {
+        return Err("no API key set".to_string());
+    }
+    if !key.contains(':') {
+        return Err(
+            "malformed: Etsy requires 'keystring:shared_secret', not the bare keystring"
+                .to_string(),
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(config.http_timeout_secs))
+        .user_agent("ecommerce-optimizer/0.1 (local-first)")
+        .build()
+        .map_err(|e| format!("client: {e}"))?;
+
+    let resp = client
+        .get("https://api.etsy.com/v3/application/openapi-ping")
+        .header("x-api-key", &key)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        // The two 403 bodies mean different things and the fix differs.
+        let hint = if body.contains("not active") {
+            " — your key is registered but NOT APPROVED YET. Check 'Your Apps' for active status."
+        } else if body.contains("format") {
+            " — the header format is wrong."
+        } else {
+            ""
+        };
+        return Err(format!(
+            "HTTP {}: {}{}",
+            status.as_u16(),
+            body.trim().chars().take(200).collect::<String>(),
+            hint
+        ));
+    }
+
+    let ping: PingResponse = serde_json::from_str(&body).map_err(|e| format!("bad JSON: {e}"))?;
+    Ok(ping.application_id)
 }
 
 // ---------------------------------------------------------------- seeds

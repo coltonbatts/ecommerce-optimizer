@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use ecommerce_optimizer::{
-    listing, pricing, Config, GenerateReport, Marketplace, OptimizeReport, Optimizer, ScanReport,
+    listing, pricing, scanner, Config, GenerateReport, Marketplace, OptimizeReport, Optimizer,
+    ScanReport,
 };
 use serde_json::json;
 use std::io::Write;
@@ -121,9 +122,7 @@ fn resolve_config(args: &Args) -> Result<(Config, bool), String> {
     }
     if let Some(v) = args.margin {
         if !(0.0..0.99).contains(&v) {
-            return Err(format!(
-                "--margin {v} is out of range (expected 0.0..0.99)"
-            ));
+            return Err(format!("--margin {v} is out of range (expected 0.0..0.99)"));
         }
         cfg.target_margin = v;
     }
@@ -474,6 +473,13 @@ async fn doctor(cfg: &Config) {
             "not set (seed provider + offline pricing)"
         }
     );
+
+    if cfg.has_marketplace_key() {
+        match scanner::verify_api_key(cfg).await {
+            Ok(app_id) => println!("  key status       : LIVE (application_id {app_id})"),
+            Err(e) => println!("  key status       : NOT USABLE — {e}"),
+        }
+    }
 
     let (rate, fixed) = cfg.marketplace.fee_model();
     match pricing::margin_floor(1.0, cfg) {

@@ -116,8 +116,7 @@ impl Config {
             return Ok((Config::default(), false));
         }
         let raw = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        let cfg: Config =
-            serde_json::from_str(&raw).map_err(|e| format!("parse {path}: {e}"))?;
+        let cfg: Config = serde_json::from_str(&raw).map_err(|e| format!("parse {path}: {e}"))?;
         Ok((cfg, true))
     }
 

@@ -157,7 +157,7 @@ pub async fn fetch_competitors(product: &Product, config: &Config) -> Result<Pri
         return Err(format!(
             "HTTP {}: {}",
             status.as_u16(),
-            body.chars().take(160).collect::<String>()
+            body.trim().chars().take(160).collect::<String>()
         ));
     }
 

@@ -110,9 +110,9 @@ Output JSON only."#,
     );
 
     match repair_hint {
-        Some(hint) => format!(
-            "{base}\n\nYour previous attempt was rejected. Fix this and try again: {hint}"
-        ),
+        Some(hint) => {
+            format!("{base}\n\nYour previous attempt was rejected. Fix this and try again: {hint}")
+        }
         None => base,
     }
 }
@@ -177,7 +177,7 @@ pub async fn generate_with_llm(
                 "Ollama HTTP {} for model '{}': {}",
                 status.as_u16(),
                 model,
-                text.chars().take(200).collect::<String>()
+                text.trim().chars().take(200).collect::<String>()
             ));
         }
 
@@ -361,9 +361,9 @@ fn contains_price(s: &str) -> bool {
                 .get(i + 1)
                 .map(|n| n.is_ascii_digit())
                 .unwrap_or(false)
-            {
-                return true;
-            }
+        {
+            return true;
+        }
     }
     false
 }
