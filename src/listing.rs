@@ -253,11 +253,15 @@ fn extract_listing(
     }
 
     // --- repair, and say what was repaired ---
-    let title = clamp_title(&title_raw);
-    if title.len() != title_raw.len() {
+    let title_clean = remove_price_tokens(&title_raw);
+    if title_clean.len() != title_raw.len() {
+        warnings.push("removed price from title".to_string());
+    }
+    let title = clamp_title(&title_clean);
+    if title.len() != title_clean.len() {
         warnings.push(format!(
             "title trimmed {} -> {} chars",
-            title_raw.chars().count(),
+            title_clean.chars().count(),
             title.chars().count()
         ));
     }
@@ -368,8 +372,46 @@ fn contains_price(s: &str) -> bool {
     false
 }
 
+/// Remove currency runs from text, plus any separator left dangling by the
+/// removal. Unlike `strip_price_mentions` this works on fragments with no
+/// sentence punctuation, which is what a listing title is.
+fn remove_price_tokens(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if matches!(c, '$' | '£' | '€') && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit()) {
+            // Consume the amount: digits, commas, thousands, one decimal run.
+            i += 1;
+            while i < chars.len()
+                && (chars[i].is_ascii_digit() || chars[i] == ',' || chars[i] == '.')
+            {
+                i += 1;
+            }
+            // Drop a separator this price was hanging off, so we don't emit
+            // "Tee -" or "Tee ,".
+            while out.ends_with(' ')
+                || out.ends_with('-')
+                || out.ends_with('|')
+                || out.ends_with(',')
+                || out.ends_with('–')
+                || out.ends_with('—')
+            {
+                out.pop();
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Prices go stale the moment the pricing pass runs, so they never belong in
-/// listing copy.
+/// listing copy — including titles.
 fn strip_price_mentions(s: &str) -> String {
     let sentences: Vec<&str> = s.split_inclusive(['.', '!', '?']).collect();
     let kept: Vec<&str> = sentences
@@ -378,10 +420,16 @@ fn strip_price_mentions(s: &str) -> String {
         .collect();
     let out = kept.join("").trim().to_string();
     if out.is_empty() {
-        s.to_string()
-    } else {
-        out
+        // Every sentence carried a price. Strip the tokens instead of dropping
+        // the whole body, so we never return something emptier than we started.
+        let tokenised = remove_price_tokens(s);
+        return if tokenised.is_empty() {
+            s.to_string()
+        } else {
+            tokenised
+        };
     }
+    out
 }
 
 /// Lowercase, strip disallowed characters, enforce the 20-char ceiling, dedupe.
@@ -392,6 +440,7 @@ fn normalize_tags(raw: &[String], category: &str) -> (Vec<String>, Vec<String>) 
     let mut truncated = 0usize;
     let mut dropped = 0usize;
     let mut reordered = 0usize;
+    let mut swapped = 0usize;
 
     for tag in raw {
         match sanitize_tag(tag) {
@@ -408,6 +457,11 @@ fn normalize_tags(raw: &[String], category: &str) -> (Vec<String>, Vec<String>) 
                 let key = word_key(&t);
                 if seen_word_keys.contains(&key) {
                     reordered += 1;
+                    continue;
+                }
+                // Same phrase, swapped garment noun — no extra reach either.
+                if out.iter().any(|kept| garment_variant_of(kept, &t)) {
+                    swapped += 1;
                     continue;
                 }
                 seen_word_keys.push(key);
@@ -430,6 +484,11 @@ fn normalize_tags(raw: &[String], category: &str) -> (Vec<String>, Vec<String>) 
             "{reordered} reordered-duplicate tag(s) dropped (same words, no extra reach)"
         ));
     }
+    if swapped > 0 {
+        warnings.push(format!(
+            "{swapped} garment-swap variant tag(s) dropped (e.g. tee/shirt/blouse)"
+        ));
+    }
 
     let _ = category;
     (out, warnings)
@@ -440,6 +499,49 @@ fn word_key(tag: &str) -> String {
     let mut words: Vec<&str> = tag.split_whitespace().collect();
     words.sort_unstable();
     words.join(" ")
+}
+
+/// Nouns small models swap to invent "new" tags that search identically:
+/// "retro graphic tee" becomes tee/shirt/blouse/top/dress.
+fn is_garment_noun(w: &str) -> bool {
+    matches!(
+        w,
+        "tee"
+            | "tees"
+            | "tshirt"
+            | "tshirts"
+            | "t-shirt"
+            | "t-shirts"
+            | "shirt"
+            | "shirts"
+            | "blouse"
+            | "blouses"
+            | "top"
+            | "tops"
+            | "dress"
+            | "dresses"
+            | "sweatshirt"
+            | "hoodie"
+            | "tank"
+            | "jumper"
+            | "pullover"
+            | "apparel"
+            | "clothing"
+    )
+}
+
+/// True when two multi-word tags are the same phrase with only the trailing
+/// garment noun swapped. Deliberately narrow: "gift for her" and "gift for him"
+/// differ in a non-garment word, so both survive.
+fn garment_variant_of(a: &str, b: &str) -> bool {
+    let wa: Vec<&str> = a.split_whitespace().collect();
+    let wb: Vec<&str> = b.split_whitespace().collect();
+    if wa.len() < 2 || wa.len() != wb.len() {
+        return false;
+    }
+    let (ha, hb) = (&wa[..wa.len() - 1], &wb[..wb.len() - 1]);
+    let (ta, tb) = (wa[wa.len() - 1], wb[wb.len() - 1]);
+    ha == hb && ta != tb && is_garment_noun(ta) && is_garment_noun(tb)
 }
 
 fn sanitize_tag(raw: &str) -> Option<String> {
@@ -459,6 +561,9 @@ fn sanitize_tag(raw: &str) -> Option<String> {
     if collapsed.is_empty() {
         return None;
     }
+    // "t-shirt" is one word, not two. Without this the hyphen-segment logic in
+    // fit_tag clips it to a useless "retro graphic t".
+    let collapsed = collapsed.replace("t-shirt", "tshirt");
     Some(fit_tag(&collapsed))
 }
 
@@ -801,6 +906,63 @@ mod tests {
         assert_eq!(tags.len(), 2, "got {tags:?}");
         assert!(tags.contains(&"custom pet portrait".to_string()));
         assert!(warnings.iter().any(|w| w.contains("reordered")));
+    }
+
+    #[test]
+    fn title_prices_are_stripped() {
+        // Real phi3:mini output: a hardcoded price in the title, stale the
+        // moment the pricing pass ran.
+        assert_eq!(
+            remove_price_tokens("Epic Film Inspired T-Shirt - $27.00"),
+            "Epic Film Inspired T-Shirt"
+        );
+        assert_eq!(
+            remove_price_tokens("Cotton Tee | $1,299.99 | Free Ship"),
+            "Cotton Tee | Free Ship"
+        );
+        assert_eq!(
+            remove_price_tokens("Retro Graphic Tee - Vintage Style Tee"),
+            "Retro Graphic Tee - Vintage Style Tee"
+        );
+    }
+
+    #[test]
+    fn garment_swap_variants_collapse_but_real_variants_survive() {
+        let raw: Vec<String> = vec![
+            "retro graphic tee",
+            "retro graphic shirt",
+            "retro graphic blouse",
+            "retro graphic top",
+            "retro graphic dress",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (tags, warnings) = normalize_tags(&raw, "clothing");
+        assert_eq!(tags.len(), 1, "got {tags:?}");
+        assert!(warnings.iter().any(|w| w.contains("garment-swap")));
+
+        // Non-garment differences are genuinely different tags.
+        let distinct: Vec<String> = vec!["gift for her", "gift for him", "gift for mom"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let (kept, _) = normalize_tags(&distinct, "clothing");
+        assert_eq!(kept.len(), 3, "gift-for tags must all survive: {kept:?}");
+    }
+
+    #[test]
+    fn t_shirt_is_treated_as_one_word() {
+        // Clipping at the hyphen produced the real tag "retro graphic t".
+        assert_eq!(
+            sanitize_tag("Retro Graphic t-shirt").unwrap(),
+            "retro graphic tshirt"
+        );
+        assert_eq!(sanitize_tag("T-Shirts").unwrap(), "tshirts");
+        // And the swap-variant rule then catches it against the tee spelling.
+        let raw: Vec<String> = vec!["retro graphic tee".into(), "retro graphic tshirt".into()];
+        let (tags, _) = normalize_tags(&raw, "clothing");
+        assert_eq!(tags.len(), 1, "got {tags:?}");
     }
 
     #[test]
