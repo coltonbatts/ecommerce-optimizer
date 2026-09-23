@@ -181,7 +181,61 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-async fn scan_etsy(config: &Config) -> Result<ScanOutcome, String> {
+/// A (category, search term) pair to probe. Terms live in a JSON file so the
+/// market scan can follow the zeitgeist without a recompile.
+#[derive(Deserialize)]
+struct TermEntry {
+    category: String,
+    term: String,
+}
+
+fn parse_search_terms(json: &str) -> Option<Vec<(String, String)>> {
+    let entries: Vec<TermEntry> = serde_json::from_str(json).ok()?;
+    let terms: Vec<(String, String)> = entries
+        .into_iter()
+        .map(|e| (e.category, e.term.trim().to_lowercase()))
+        .filter(|(_, t)| !t.is_empty())
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms)
+    }
+}
+
+fn builtin_terms() -> Vec<(String, String)> {
+    SEARCH_TERMS
+        .iter()
+        .map(|(c, t)| (c.to_string(), t.to_string()))
+        .collect()
+}
+
+/// Search terms for the live scan. `data/search_terms.json` wins when present
+/// and readable; otherwise the built-in list is used and the reason is
+/// returned in the note — never a silent fallback.
+fn load_search_terms(path: &str) -> (Vec<(String, String)>, String) {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => match parse_search_terms(&raw) {
+            Some(terms) => {
+                let n = terms.len();
+                (terms, format!("search terms: {n} from {path}"))
+            }
+            None => (
+                builtin_terms(),
+                format!("search terms: built-in list ({path} is empty or invalid)"),
+            ),
+        },
+        Err(_) => (
+            builtin_terms(),
+            "search terms: built-in list (no data/search_terms.json)".to_string(),
+        ),
+    }
+}
+
+async fn scan_etsy(
+    config: &Config,
+    terms: &[(String, String)],
+) -> Result<ScanOutcome, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(config.http_timeout_secs))
         .user_agent("ecommerce-optimizer/0.1 (local-first)")
@@ -193,12 +247,12 @@ async fn scan_etsy(config: &Config) -> Result<ScanOutcome, String> {
     let mut notes = Vec::new();
     let mut failures = 0usize;
 
-    for (category, term) in SEARCH_TERMS {
+    for (category, term) in terms {
         if !config.categories.iter().any(|c| c == category) {
             continue;
         }
 
-        match etsy_search(&client, &key, term, 24).await {
+        match etsy_search(&client, &key, term.as_str(), 24).await {
             Ok(resp) => {
                 let prices: Vec<f64> = resp
                     .results
@@ -575,9 +629,13 @@ fn load_seed_override(path: &str) -> Option<Vec<Product>> {
 // ---------------------------------------------------------------- entry
 
 pub async fn scan_trending(config: &Config, seeds_path: &str) -> Result<ScanOutcome, String> {
+    let (terms, terms_note) = load_search_terms("data/search_terms.json");
     if config.has_marketplace_key() {
-        match scan_etsy(config).await {
-            Ok(outcome) if !outcome.products.is_empty() => return Ok(outcome),
+        match scan_etsy(config, &terms).await {
+            Ok(mut outcome) if !outcome.products.is_empty() => {
+                outcome.notes.insert(0, terms_note);
+                return Ok(outcome);
+            }
             Ok(_) => {}
             Err(e) => {
                 // Fall back rather than fail: an offline-capable tool still has
