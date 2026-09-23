@@ -530,6 +530,21 @@ fn pad_tags(tags: &mut Vec<String>, category: &str, warnings: &mut Vec<String>) 
         return;
     }
     let pool: &[&str] = match category {
+        "clothing" => &[
+            "graphic tee",
+            "unisex t shirt",
+            "film lover gift",
+            "movie shirt",
+            "retro tee",
+            "funny t shirt",
+            "gift for him",
+            "gift for her",
+            "cotton tee",
+            "cult classic",
+            "minimalist shirt",
+            "birthday gift",
+            "vintage style tee",
+        ],
         "jewelry" => &[
             "jewelry",
             "gift for her",

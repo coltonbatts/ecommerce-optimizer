@@ -32,6 +32,15 @@ pub struct ScanOutcome {
 /// A niche to probe on the marketplace. Each keyword becomes one product
 /// opportunity, priced from the median of the real listings returned for it.
 const SEARCH_TERMS: &[(&str, &str)] = &[
+    // Apparel — the category BattsBespoke actually sells in.
+    ("clothing", "retro graphic tee"),
+    ("clothing", "film inspired t shirt"),
+    ("clothing", "funny saying t shirt"),
+    ("clothing", "vintage band tee"),
+    ("clothing", "horror movie t shirt"),
+    ("clothing", "minimalist line art tee"),
+    ("clothing", "unisex cotton tee"),
+    ("clothing", "cult classic movie shirt"),
     ("home & living", "espresso martini candle"),
     ("home & living", "cottagecore wall art"),
     ("home & living", "mushroom lamp"),
@@ -352,6 +361,49 @@ fn seed_products() -> Vec<Product> {
     };
 
     vec![
+        // Apparel — matches BattsBespoke's actual product line.
+        p(
+            "Retro Film Quote Graphic Tee, Unisex Cotton",
+            "clothing",
+            26.00,
+            0.85,
+            0.55,
+        ),
+        p(
+            "Cult Classic Movie Inspired T Shirt, Minimalist",
+            "clothing",
+            24.00,
+            0.80,
+            0.50,
+        ),
+        p(
+            "Funny Saying T Shirt, Sarcastic Humor Tee",
+            "clothing",
+            22.00,
+            0.85,
+            0.65,
+        ),
+        p(
+            "Vintage Band Style Graphic Tee, Faded Print",
+            "clothing",
+            28.00,
+            0.75,
+            0.60,
+        ),
+        p(
+            "Horror Movie Villain T Shirt, Retro Slasher",
+            "clothing",
+            25.00,
+            0.80,
+            0.55,
+        ),
+        p(
+            "Minimalist Line Art Tee, Single Color Print",
+            "clothing",
+            23.00,
+            0.70,
+            0.45,
+        ),
         p(
             "Vintage Gold Framed Butterfly Wall Art, Cottagecore Decor",
             "home & living",
