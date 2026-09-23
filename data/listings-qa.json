@@ -1,6 +1,7 @@
 [
   {
     "product_id": 2,
+    "status": "placeholder",
     "niche": "Film Inspired T Shirt",
     "search_query": "film inspired t shirt",
     "price": 28.99,
@@ -26,6 +27,7 @@
   },
   {
     "product_id": 1,
+    "status": "placeholder",
     "niche": "Retro Graphic Tee",
     "search_query": "retro graphic tee",
     "price": 28.99,
@@ -51,6 +53,7 @@
   },
   {
     "product_id": 8,
+    "status": "placeholder",
     "niche": "Cult Classic Movie Shirt",
     "search_query": "cult classic movie shirt",
     "price": 28.99,
@@ -76,6 +79,7 @@
   },
   {
     "product_id": 5,
+    "status": "placeholder",
     "niche": "Horror Movie T Shirt",
     "search_query": "horror movie t shirt",
     "price": 28.99,
@@ -101,6 +105,7 @@
   },
   {
     "product_id": 4,
+    "status": "placeholder",
     "niche": "Vintage Band Tee",
     "search_query": "vintage band tee",
     "price": 28.99,
@@ -126,6 +131,7 @@
   },
   {
     "product_id": 6,
+    "status": "placeholder",
     "niche": "Minimalist Line Art Tee",
     "search_query": "minimalist line art tee",
     "price": 28.99,
@@ -151,6 +157,7 @@
   },
   {
     "product_id": 7,
+    "status": "placeholder",
     "niche": "Unisex Cotton Tee",
     "search_query": "unisex cotton tee",
     "price": 28.99,
@@ -176,6 +183,7 @@
   },
   {
     "product_id": 3,
+    "status": "placeholder",
     "niche": "Funny Saying T Shirt",
     "search_query": "funny saying t shirt",
     "price": 28.99,
@@ -201,6 +209,7 @@
   },
   {
     "product_id": 75,
+    "status": "ready",
     "niche": "ADHD Diva Possum",
     "search_query": "adhd shirt",
     "title": "ADHD Possum Tee — A Diva Has Distractions Graphic Shirt",
@@ -226,6 +235,7 @@
   },
   {
     "product_id": 76,
+    "status": "ready",
     "niche": "Dilly Dallying",
     "search_query": "dilly dallying shirt",
     "title": "Sorry I'm Late I Was Dilly Dallying Shirt, Retro Shopping Tee",

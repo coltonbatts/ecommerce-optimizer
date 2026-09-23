@@ -20,6 +20,13 @@ material copy is permitted — but only as an exact APPROVED_SPECS block. Any
 other material claim is still an ERROR: the block is the evidence, and it must
 match exactly to stay evidence. Two size ranges are approved because the blank
 carries both: standard (S-2XL) and extended (XS-5XL, white colorway verified).
+
+Every listing carries a `status`:
+    "ready"       — real art exists; goes into the paste pack
+    "placeholder" — market-generated copy with no art; validated, never packed
+    "draft"       — proposed copy for art not drawn yet; validated, never packed
+A missing or unknown status is an ERROR (no silent default). The paste pack
+renders only "ready" listings and states how many were skipped and why.
 """
 
 import csv
@@ -29,6 +36,8 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+STATUSES = ("ready", "placeholder", "draft")
 
 TITLE_MAX = 140
 TAGS_MAX = 13
@@ -140,6 +149,11 @@ def validate(item: dict) -> tuple[list[str], list[str]]:
     # Scan copy ONLY — the spec block is verified separately below.
     blob = f"{item.get('title', '')}\n{item.get('description', '')}"
 
+    # --- lifecycle status: decides whether the listing reaches the paste pack
+    status = item.get("status")
+    if status not in STATUSES:
+        errors.append(f"status {status!r} — must be one of {', '.join(STATUSES)}")
+
     # --- marketplace limits
     title = item.get("title", "")
     if not title.strip():
@@ -191,12 +205,29 @@ def validate(item: dict) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
-def render_md(items: list[dict]) -> str:
+def skipped_summary(skipped: list[dict]) -> str:
+    """'8 placeholder, 1 draft' — the visible count of what stayed out of the pack."""
+    counts: dict[str, int] = {}
+    for it in skipped:
+        counts[it["status"]] = counts.get(it["status"], 0) + 1
+    return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+
+
+def render_md(items: list[dict], skipped: list[dict]) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    skip_line = (
+        f"**Skipped (not paste-ready): {len(skipped)}** — {skipped_summary(skipped)}: "
+        + "; ".join(it["niche"] for it in skipped)
+        if skipped
+        else "Skipped: none"
+    )
     out = [
         "# BattsBespoke — Listing Pack (QA-passed)",
         "",
-        f"{len(items)} listings · QA gate: scripts/qa_export.py · regenerated {now}",
+        f"{len(items)} ready listings · QA gate: scripts/qa_export.py · regenerated {now}",
+        "",
+        skip_line,
+        "",
         "Copy reviewed by hand. Blank verified: Bella + Canvas 3001 (Printful). "
         "Material copy = the approved spec block only.",
         "",
@@ -326,16 +357,23 @@ def main() -> int:
         print(f"\n{total_errs} error(s) — nothing written.")
         return 1
 
+    ready = [it for it in items if it["status"] == "ready"]
+    skipped = [it for it in items if it["status"] != "ready"]
+
     root = src.parent.parent
     md_path = root / "out" / "listings-export.md"
     csv_path = root / "out" / "listings-export.csv"
     db_path = root / "data" / "optimizer.db"
 
-    md_path.write_text(render_md(items), encoding="utf-8")
-    render_csv(items, csv_path)
+    md_path.write_text(render_md(ready, skipped), encoding="utf-8")
+    render_csv(ready, csv_path)
+    # The DB mirrors the source of truth, so every validated row syncs —
+    # status only gates what reaches the paste pack.
     n = sync_db(items, db_path)
-    print(f"\nAll {len(items)} listings passed. Wrote {md_path.name} + {csv_path.name}, "
-          f"synced {n} DB rows.")
+    print(f"\nAll {len(items)} listings passed. Wrote {md_path.name} + {csv_path.name} "
+          f"with {len(ready)} ready, synced {n} DB rows.")
+    if skipped:
+        print(f"SKIPPED from paste pack: {len(skipped)} ({skipped_summary(skipped)})")
     return 0
 
 
