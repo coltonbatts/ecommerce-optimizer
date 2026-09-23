@@ -113,6 +113,37 @@ fn hundred() -> i64 {
     100
 }
 
+/// Minimum comparable listings before live stats are trustworthy. Below this the
+/// sample is noise and we say so rather than pricing off it.
+pub const MIN_COMPARABLE_SAMPLES: usize = 8;
+
+/// Never let the ceiling run far above the reference. Etsy search results mix
+/// new goods with genuine collectibles — an authentic vintage tour tee at $210
+/// sitting among $25 screen prints is not a comparable.
+pub const MAX_CEILING_MULTIPLE: f64 = 2.0;
+
+/// Keywords for a competitor search. Prefers the query the scanner recorded;
+/// falls back to deriving one from the display name.
+fn search_keywords(product: &Product) -> String {
+    if let Some(term) = product.search_term.as_ref() {
+        if !term.trim().is_empty() {
+            return term.trim().to_string();
+        }
+    }
+    // Derive defensively: display names carry punctuation (commas, hyphens, em
+    // dashes, parentheses) that would otherwise end up inside the query string.
+    product
+        .name
+        .split([',', '-', '—', '–', '|', '(', '/'])
+        .next()
+        .unwrap_or(&product.name)
+        .split_whitespace()
+        .take(5)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 /// Real competitor prices for a product, measured from live Etsy search
 /// results. Requires an API key; returns Err so the caller can fall back.
 pub async fn fetch_competitors(product: &Product, config: &Config) -> Result<PriceStats, String> {
@@ -121,17 +152,10 @@ pub async fn fetch_competitors(product: &Product, config: &Config) -> Result<Pri
         return Err("no marketplace API key configured".to_string());
     }
 
-    // Search on the product's leading keywords, which is how a real seller
-    // would size up their competition.
-    let keywords: String = product
-        .name
-        .split([',', '-'])
-        .next()
-        .unwrap_or(&product.name)
-        .split_whitespace()
-        .take(5)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let keywords = search_keywords(product);
+    if keywords.is_empty() {
+        return Err("no usable search keywords for this product".to_string());
+    }
 
     let url = format!(
         "https://openapi.etsy.com/v3/application/listings/active?keywords={}&limit=50&sort_on=score",
@@ -178,6 +202,14 @@ pub async fn fetch_competitors(product: &Product, config: &Config) -> Result<Pri
     if prices.is_empty() {
         return Err("no USD-priced competitors returned".to_string());
     }
+    if prices.len() < MIN_COMPARABLE_SAMPLES {
+        return Err(format!(
+            "only {} comparable listing(s) for \"{}\" (need {}); using the offline estimate",
+            prices.len(),
+            keywords,
+            MIN_COMPARABLE_SAMPLES
+        ));
+    }
 
     prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = prices.len();
@@ -214,11 +246,17 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Online when possible, offline otherwise. Always succeeds.
+/// Online when possible, offline otherwise. Always succeeds, and always carries
+/// the reason for whichever path it took.
 pub async fn competitor_stats(product: &Product, config: &Config) -> PriceStats {
     if config.has_marketplace_key() {
-        if let Ok(stats) = fetch_competitors(product, config).await {
-            return stats;
+        match fetch_competitors(product, config).await {
+            Ok(stats) => return stats,
+            Err(e) => {
+                let mut est = estimate_competitors(product);
+                est.note = format!("{} (live lookup skipped: {})", est.note, e);
+                return est;
+            }
         }
     }
     estimate_competitors(product)
@@ -282,12 +320,21 @@ pub fn optimize_price(
     let positioning = 1.0 + (0.20 * demand) - (0.25 * comp);
     let mut target = stats.reference * positioning;
 
-    // Stay inside the observed competitive envelope.
-    let ceiling = stats.max.max(stats.min);
+    // Stay inside the observed competitive envelope, but do not let a mixed
+    // market (collectibles alongside new goods) drag the ceiling up. Without
+    // this an authentic $210 vintage tee sets the cap for a $25 screen print.
+    let mut ceiling = stats.max.min(stats.reference * MAX_CEILING_MULTIPLE);
+    ceiling = ceiling.max(stats.min);
     let mut notes: Vec<String> = Vec::new();
+    if stats.max > stats.reference * MAX_CEILING_MULTIPLE {
+        notes.push(format!(
+            "ceiling held to ${:.2}; live max ${:.2} is an outlier (likely collectible)",
+            ceiling, stats.max
+        ));
+    }
     if target > ceiling {
         target = ceiling;
-        notes.push("capped at the top of the competitor range".to_string());
+        notes.push("capped at the top of the comparable range".to_string());
     }
     let mut price = charm_price(target.max(floor), floor);
 
@@ -372,7 +419,71 @@ mod tests {
             demand_score: 0.8,
             competition_score: 0.5,
             created_at: "2026-01-01T00:00:00Z".to_string(),
+            search_term: Some("test candle".to_string()),
         }
+    }
+
+    fn named(name: &str, search_term: Option<&str>) -> Product {
+        Product {
+            name: name.to_string(),
+            search_term: search_term.map(String::from),
+            ..product()
+        }
+    }
+
+    #[test]
+    fn search_term_wins_over_a_punctuation_laden_display_name() {
+        // The real bug: the scanner named products "Vintage Band Tee — Etsy niche
+        // cluster" and the query became "Vintage Band Tee — Etsy", returning 2
+        // unrelated $100 listings.
+        let p = named(
+            "Vintage Band Tee — Etsy niche cluster",
+            Some("vintage band tee"),
+        );
+        assert_eq!(search_keywords(&p), "vintage band tee");
+    }
+
+    #[test]
+    fn derived_keywords_strip_em_dashes_and_parens() {
+        for (name, want) in [
+            ("Vintage Band Tee — Etsy niche cluster", "vintage band tee"),
+            ("Wabi Sabi Painting – Japanese", "wabi sabi painting"),
+            ("Custom Pet Portrait (from photo)", "custom pet portrait"),
+            ("Gift, for her, handmade", "gift"),
+        ] {
+            assert_eq!(search_keywords(&named(name, None)), want, "name: {name}");
+        }
+    }
+
+    #[test]
+    fn a_collectible_outlier_does_not_set_the_ceiling() {
+        // $25 screen prints sitting next to one authentic $210 vintage tee.
+        let stats = PriceStats {
+            reference: 27.50,
+            min: 18.49,
+            max: 210.00,
+            sample_size: 35,
+            source: "etsy_api".into(),
+            note: String::new(),
+        };
+        let out = optimize_price(&listing(27.0, 0.0), &product(), &stats, &cfg(0.3)).unwrap();
+        assert!(
+            out.decision.recommended_price < 60.0,
+            "should not price near the collectible: {}",
+            out.decision.recommended_price
+        );
+        assert!(
+            out.decision.notes.contains("outlier"),
+            "the outlier clamp must be reported: {}",
+            out.decision.notes
+        );
+    }
+
+    #[test]
+    fn an_impossible_live_sample_is_rejected_not_trusted() {
+        // Two results, both $100 — the corrupt-query signature.
+        let prices: Vec<f64> = vec![100.0];
+        assert!(prices.len() < MIN_COMPARABLE_SAMPLES);
     }
 
     fn listing(price: f64, cost: f64) -> Listing {

@@ -10,6 +10,10 @@ pub struct Product {
     pub demand_score: f64,
     pub competition_score: f64,
     pub created_at: String,
+    /// The exact query this opportunity came from. Stored rather than re-derived
+    /// from `name`, because display names contain punctuation that corrupts a
+    /// search query (an em dash in the name once produced a 2-result search).
+    pub search_term: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +144,7 @@ impl Database {
         self.ensure_column("listings", "updated_at", "TEXT")?;
         self.ensure_column("products", "unit_cost", "REAL")?;
         self.ensure_column("products", "source", "TEXT NOT NULL DEFAULT 'seed'")?;
+        self.ensure_column("products", "search_term", "TEXT")?;
 
         // Collapse duplicates left by the pre-idempotent scanner, then make the
         // natural keys unique so re-running any command is a no-op.
@@ -178,13 +183,14 @@ impl Database {
     /// Idempotent: re-scanning the same product updates its scores in place.
     pub fn upsert_product(&self, product: &Product) -> DbResult<i64> {
         self.conn.query_row(
-            "INSERT INTO products (name, category, market_price, demand_score, competition_score, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO products (name, category, market_price, demand_score, competition_score, created_at, search_term)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(name) DO UPDATE SET
                 category = excluded.category,
                 market_price = excluded.market_price,
                 demand_score = excluded.demand_score,
-                competition_score = excluded.competition_score
+                competition_score = excluded.competition_score,
+                search_term = excluded.search_term
              RETURNING id",
             params![
                 product.name,
@@ -192,29 +198,37 @@ impl Database {
                 product.market_price,
                 product.demand_score,
                 product.competition_score,
-                product.created_at
+                product.created_at,
+                product.search_term
             ],
             |row| row.get(0),
         )
     }
 
+    const PRODUCT_COLS: &'static str =
+        "id, name, category, market_price, demand_score, competition_score, created_at, search_term";
+
+    fn row_to_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
+        Ok(Product {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            category: row.get("category")?,
+            market_price: row.get("market_price")?,
+            demand_score: row.get("demand_score")?,
+            competition_score: row.get("competition_score")?,
+            created_at: row.get("created_at")?,
+            search_term: row.get("search_term")?,
+        })
+    }
+
     pub fn all_products(&self) -> DbResult<Vec<Product>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, category, market_price, demand_score, competition_score, created_at
-             FROM products ORDER BY demand_score DESC, id ASC",
-        )?;
+        let sql = format!(
+            "SELECT {} FROM products ORDER BY demand_score DESC, id ASC",
+            Self::PRODUCT_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![], |row| {
-                Ok(Product {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    category: row.get(2)?,
-                    market_price: row.get(3)?,
-                    demand_score: row.get(4)?,
-                    competition_score: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            })?
+            .query_map(params![], Self::row_to_product)?
             .collect::<DbResult<Vec<Product>>>()?;
         Ok(rows)
     }
@@ -222,45 +236,28 @@ impl Database {
     /// Products with no listing yet. Ordered by demand so the best
     /// opportunities are generated first when `--limit` is used.
     pub fn products_needing_listings(&self) -> DbResult<Vec<Product>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.name, p.category, p.market_price, p.demand_score, p.competition_score, p.created_at
-             FROM products p
+        let sql = format!(
+            "SELECT {} FROM products p
              LEFT JOIN listings l ON l.product_id = p.id
              WHERE l.id IS NULL
              ORDER BY p.demand_score DESC, p.id ASC",
-        )?;
+            Self::PRODUCT_COLS
+                .split(", ")
+                .map(|c| format!("p.{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![], |row| {
-                Ok(Product {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    category: row.get(2)?,
-                    market_price: row.get(3)?,
-                    demand_score: row.get(4)?,
-                    competition_score: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            })?
+            .query_map(params![], Self::row_to_product)?
             .collect::<DbResult<Vec<Product>>>()?;
         Ok(rows)
     }
 
     pub fn product_by_id(&self, id: i64) -> DbResult<Option<Product>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, category, market_price, demand_score, competition_score, created_at
-             FROM products WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map(params![id], |row| {
-            Ok(Product {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                category: row.get(2)?,
-                market_price: row.get(3)?,
-                demand_score: row.get(4)?,
-                competition_score: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?;
+        let sql = format!("SELECT {} FROM products WHERE id = ?1", Self::PRODUCT_COLS);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_product)?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
             None => Ok(None),

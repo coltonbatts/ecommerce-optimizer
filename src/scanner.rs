@@ -239,12 +239,15 @@ async fn scan_etsy(config: &Config) -> Result<ScanOutcome, String> {
 
                 products.push(Product {
                     id: 0,
-                    name: format!("{} — Etsy niche cluster", titlecase(term)),
+                    // Display name is just the niche; the query lives in
+                    // `search_term` so display punctuation can never corrupt it.
+                    name: titlecase(term),
                     category: category.to_string(),
                     market_price: (reference * 100.0).round() / 100.0,
                     demand_score: (demand * 100.0).round() / 100.0,
                     competition_score: (competition * 100.0).round() / 100.0,
                     created_at: Utc::now().to_rfc3339(),
+                    search_term: Some(term.to_string()),
                 });
             }
             Err(e) => {
@@ -345,6 +348,16 @@ pub async fn verify_api_key(config: &Config) -> Result<i64, String> {
 
 // ---------------------------------------------------------------- seeds
 
+/// Seeds carry a descriptive display name; strip it down to a searchable query.
+fn seed_search_term(name: &str) -> String {
+    let head = name.split(',').next().unwrap_or(name);
+    head.split_whitespace()
+        .take(5)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 /// Curated opportunities from Etsy bestseller/market research. This is the
 /// offline path, and it is a first-class provider — not a placeholder. It is
 /// deterministic, which means `scan` twice in a row is a genuine no-op.
@@ -358,6 +371,7 @@ fn seed_products() -> Vec<Product> {
         demand_score: demand,
         competition_score: comp,
         created_at: now(),
+        search_term: Some(seed_search_term(name)),
     };
 
     vec![
@@ -546,12 +560,13 @@ fn load_seed_override(path: &str) -> Option<Vec<Product>> {
             .into_iter()
             .map(|s| Product {
                 id: 0,
-                name: s.name,
+                name: s.name.clone(),
                 category: s.category,
                 market_price: s.market_price,
                 demand_score: s.demand_score,
                 competition_score: s.competition_score,
                 created_at: Utc::now().to_rfc3339(),
+                search_term: Some(seed_search_term(&s.name)),
             })
             .collect(),
     )

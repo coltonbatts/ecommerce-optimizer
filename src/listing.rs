@@ -728,6 +728,7 @@ mod tests {
             demand_score: 0.9,
             competition_score: 0.6,
             created_at: "2026-01-01T00:00:00Z".to_string(),
+            search_term: Some("espresso martini candle".to_string()),
         }
     }
 
