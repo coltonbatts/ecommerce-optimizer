@@ -24,5 +24,19 @@
   { "category": "clothing", "term": "giallo shirt" },
   { "category": "clothing", "term": "80s slasher shirt" },
   { "category": "clothing", "term": "film inspired t shirt" },
-  { "category": "clothing", "term": "cult classic movie shirt" }
+  { "category": "clothing", "term": "cult classic movie shirt" },
+  { "category": "clothing", "term": "meme shirt" },
+  { "category": "clothing", "term": "funny meme shirt" },
+  { "category": "clothing", "term": "trending shirt" },
+  { "category": "clothing", "term": "viral shirt" },
+  { "category": "clothing", "term": "pop culture shirt" },
+  { "category": "clothing", "term": "pop culture gift" },
+  { "category": "clothing", "term": "political shirt" },
+  { "category": "clothing", "term": "political humor shirt" },
+  { "category": "clothing", "term": "election shirt" },
+  { "category": "clothing", "term": "funny shirt" },
+  { "category": "clothing", "term": "sarcastic shirt" },
+  { "category": "clothing", "term": "joke shirt" },
+  { "category": "clothing", "term": "brainrot shirt" },
+  { "category": "clothing", "term": "ironic shirt" }
 ]
