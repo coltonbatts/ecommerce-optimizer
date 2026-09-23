@@ -3,9 +3,12 @@
 then re-render exports and sync the SQLite DB. Stdlib only. Deterministic.
 
 Usage:
-    python3 scripts/qa_export.py data/listings-qa.json
+    python3 scripts/qa_export.py data/listings-qa.json            # gate + render + DB sync
+    python3 scripts/qa_export.py --check data/listings-drafts.json  # gate only, writes nothing
 
 Exits non-zero (and touches nothing) if any listing has an ERROR-level problem.
+--check runs the identical validation but never writes exports or the DB, so
+draft copy can be proven gate-clean without disturbing the real paste pack.
 WARN-level findings print for human review but don't block.
 
 Why this exists: structural clamps in src/listing.rs enforce marketplace limits,
@@ -334,10 +337,13 @@ def sync_db(items: list[dict], db_path: Path) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    check_only = "--check" in args
+    args = [a for a in args if a != "--check"]
+    if len(args) != 1:
         print(__doc__)
         return 2
-    src = Path(sys.argv[1])
+    src = Path(args[0])
     items = json.loads(src.read_text(encoding="utf-8"))
 
     # --- pricing cross-check against the pricing pass's math
@@ -356,6 +362,9 @@ def main() -> int:
     if total_errs:
         print(f"\n{total_errs} error(s) — nothing written.")
         return 1
+    if check_only:
+        print(f"\nAll {len(items)} listings passed (--check: nothing written).")
+        return 0
 
     ready = [it for it in items if it["status"] == "ready"]
     skipped = [it for it in items if it["status"] != "ready"]
