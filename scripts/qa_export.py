@@ -3,7 +3,7 @@
 then re-render exports and sync the SQLite DB. Stdlib only. Deterministic.
 
 Usage:
-    python3 scripts/qa_export.py out/listings-qa.json
+    python3 scripts/qa_export.py data/listings-qa.json
 
 Exits non-zero (and touches nothing) if any listing has an ERROR-level problem.
 WARN-level findings print for human review but don't block.
@@ -14,6 +14,11 @@ but phi3:mini content failures slip past them — unverified material claims
 a matching tie"), IP-bait phrasing ("iconic movie posters and characters"),
 broken grammar ("it' endorses"), and junk tags ("horror movie movie").
 This gate catches all of those deterministically before anything gets pasted.
+
+Blank specs are now VERIFIED (Bella + Canvas 3001 via Printful, 2026-09-23), so
+material copy is permitted — but only as the exact APPROVED_SPEC block. Any
+other material claim is still an ERROR: the block is the evidence, and it must
+match exactly to stay evidence.
 """
 
 import csv
@@ -33,9 +38,32 @@ TAG_LEN_MAX = 20
 FEE_PCT = 0.095
 FEE_FIXED = 0.45
 
+# The one permitted material-copy block. Sourced from Printful's Bella + Canvas
+# 3001 product record (variant names + spec sheet). Exempt from BANNED_CLAIMS
+# below because it is the verification evidence — but it must match byte for
+# byte. Edit it only when re-verified against the source.
+APPROVED_SPEC = (
+    "The details:\n"
+    "- Bella + Canvas 3001 unisex retail fit with tear-away label\n"
+    "- 100% combed and ring-spun cotton (heather colorways: polyester/cotton blend)\n"
+    "- 4.2 oz/yd² (142 g/m²), pre-shrunk\n"
+    "- Side-seamed construction, shoulder-to-shoulder taping\n"
+    "- Sizes S, M, L, XL, 2XL\n"
+    "- Blank sourced from Guatemala, Nicaragua, Mexico, Honduras, or the US\n"
+    "\n"
+    "Lighter colorways are slightly sheer — that is the nature of the fabric."
+)
+
+# Landed cost model (Printful, measured 2026-09-23): product cost by size plus
+# $4.95 flat-rate US shipping absorbed by the shop.
+#   S-XL $11.92 + 4.95 = $16.87 | 2XL $13.92 + 4.95 = $18.87
+#   3XL  $15.92 + 4.95 = $20.87 | 4XL $17.92 + 4.95 = $22.87
+# Surcharges hold ~29% margin at the base price across every size.
+SIZE_TIERS = "S-XL base | 2XL +$3 | 3XL +$6 | 4XL +$9"
+
 # ERROR-level: unverified factual claims about materials, safety, durability,
-# or performance. BattsBespoke's blank specs are unknown to the pipeline, so
-# copy must not assert them. (Colton can add exact specs once confirmed.)
+# or performance outside the approved spec block. Anything here is a claim we
+# cannot evidence.
 BANNED_CLAIMS = [
     r"100\s*%\s*cotton",
     r"organic cotton",
@@ -80,10 +108,17 @@ def fee_for(price: float) -> float:
     return FEE_PCT * price + FEE_FIXED
 
 
+def full_description(item: dict) -> str:
+    """What actually gets pasted and stored: copy + verified spec block."""
+    spec = item.get("spec", "")
+    return f"{item['description']}\n\n{spec}" if spec else item["description"]
+
+
 def validate(item: dict) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     label = item.get("niche", "?")
+    # Scan copy ONLY — the spec block is verified separately below.
     blob = f"{item.get('title', '')}\n{item.get('description', '')}"
 
     # --- marketplace limits
@@ -113,6 +148,13 @@ def validate(item: dict) -> tuple[list[str], list[str]]:
     if len(desc.split()) < 15:
         errors.append("description too short")
 
+    # --- verified spec block: permitted material copy, exact text only
+    spec = item.get("spec", "")
+    if not spec:
+        warnings.append("no spec block — listing carries no material copy")
+    elif spec != APPROVED_SPEC:
+        errors.append("spec block does not match the verified blank specs")
+
     # --- claim / IP / slop safety
     for pat in BANNED_CLAIMS:
         m = re.search(pat, blob, re.IGNORECASE)
@@ -136,12 +178,13 @@ def render_md(items: list[dict]) -> str:
         "# BattsBespoke — Listing Pack (QA-passed)",
         "",
         f"{len(items)} listings · QA gate: scripts/qa_export.py · regenerated {now}",
-        "Copy reviewed by hand: no material/safety claims (blank specs unconfirmed), no real film/character/band references.",
+        "Copy reviewed by hand. Blank verified: Bella + Canvas 3001 (Printful). "
+        "Material copy = the approved spec block only.",
         "",
         "## Before you paste",
-        "1. Paste from the TITLE / TAGS / DESCRIPTION blocks below.",
+        "1. Paste from the TITLE / TAGS / DESCRIPTION blocks below (description includes the verified spec block).",
         "2. Add your mockup images (4500x5400 designs on the tee mockups).",
-        "3. Optional: tell Hermes the blank/fabric specs and sizes to add exact material copy + a size list.",
+        f"3. Set size pricing per listing in Etsy: {SIZE_TIERS}.",
         "",
     ]
     for i, it in enumerate(items, 1):
@@ -155,6 +198,7 @@ def render_md(items: list[dict]) -> str:
             "",
             f"**Price:** ${price:.2f}  (unit cost ${cost:.2f} → nets ${net:.2f}, {margin:.1f}% margin)",
             f"**Competitor query:** `{it['search_query']}`",
+            f"**Size pricing:** {SIZE_TIERS}",
             "",
             f"**TITLE** ({len(it['title'])}/{TITLE_MAX}) — click to select, copy, paste",
             "```",
@@ -166,9 +210,9 @@ def render_md(items: list[dict]) -> str:
             tags_line,
             "```",
             "",
-            "**DESCRIPTION**",
+            "**DESCRIPTION** (includes verified blank specs)",
             "```",
-            it["description"],
+            full_description(it),
             "```",
             "",
             "---",
@@ -182,7 +226,6 @@ CSV_FIELDS = [
     "price", "unit_cost", "net_after_fees", "margin_pct", "description",
     "copy_source", "model",
 ]
-
 
 def render_csv(items: list[dict], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -203,7 +246,7 @@ def render_csv(items: list[dict], path: Path) -> None:
                 "unit_cost": f"{cost:.2f}",
                 "net_after_fees": f"{net:.2f}",
                 "margin_pct": f"{(net - cost) / price * 100:.1f}",
-                "description": it["description"],
+                "description": full_description(it),
                 "copy_source": "hermes-reviewed",
                 "model": "phi3:mini+hermes",
             })
@@ -225,7 +268,7 @@ def sync_db(items: list[dict], db_path: Path) -> int:
                 "updated_at=? WHERE product_id=?",
                 (
                     it["title"],
-                    it["description"],
+                    full_description(it),
                     sep.join(it["tags"]),
                     it["unit_cost"],
                     now,
