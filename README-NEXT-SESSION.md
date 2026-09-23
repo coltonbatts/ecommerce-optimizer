@@ -1,66 +1,68 @@
 # Next steps
 
-State as of this session. The pipeline is real end to end — this file is what's
-actually left, not what was already done.
+Current state of the project. This file is what's actually left — not what was
+already done.
 
-## Working now
+## Working end to end
 
-- `scan` → 16 opportunities (seed provider; Etsy v3 provider implemented, key-gated)
-- `generate` → **16/16 listings written by phi3:mini locally**, ~54s for all 16
-- `optimize` → 16/16 priced, margin floor verified independently at ≥29.99%
-- `watch`, `status`, `doctor`, `--json`, `--dry-run` all exercised
-- 13 unit tests green
+- `scan` — live Etsy v3 market data (API key) with a deterministic offline seed
+  provider as fallback. Reports which one ran.
+- `generate` — listings written by a local Ollama model, ~35s for 8 listings at
+  concurrency 3. Template fallback when the daemon is down.
+- `optimize` — competitor pricing from live Etsy results, with a fee-aware
+  margin floor.
+- `watch`, `status`, `doctor`, `--json`, `--dry-run`, `--limit`, `--force`.
+- 20 unit tests, 0 clippy warnings.
 
-## Blocked on you
+## Known limitations
 
-### 1. Etsy API key — unblocks two things at once
+### Model quality
 
-`src/scanner.rs::scan_etsy` and `src/pricing.rs::fetch_competitors` are written
-and compile, but have never run against live data because no key exists.
+`phi3:mini` writes usable copy but over-generates tags (14–40 where 13 are
+allowed) and repeats phrases. The repair layer handles all of it — every listing
+ships compliant — but a stronger model needs less repair.
 
-- Register at https://developers.etsy.com
-- The `x-api-key` header needs `keystring:shared_secret` (bare keystring → HTTP 403)
-- Then: `--api-key "ks:ss"` or put it in `config.json`
+`GenerateReport.warnings` is the quality metric: fewer warnings per listing is
+better. Compare models with:
 
-No code changes needed. That single input turns the seed provider into live
-market research and the offline estimator into measured competitor prices.
+```bash
+cargo run --release --bin ecommerce-optimizer -- generate --force --model llama3.2:3b
+```
 
-**Verify after:** `scan --api-key ...` should report `source: etsy_api`, and
-`optimize` rows should show `source: etsy_api` with a non-zero sample size.
+Known residual artifact: occasional junk short tags from the model (e.g. `uni`
+where it meant `unisex`). 1 in ~100 tags.
 
-### 2. Real unit costs
+### Unit costs are estimated
 
-`cost_ratio` (default 0.45) guesses unit cost as a share of the competitor
-median. That makes the margin *floor* a guess. If you know real costs, the
-`listings.unit_cost` column is already wired: set it and pricing uses it instead
-of the heuristic.
+The margin floor is only as good as the cost basis. By default it assumes unit
+cost is 45% of the competitor median (`cost_ratio`). If you know real blank +
+print costs, set `listings.unit_cost` and pricing uses it instead.
 
-## Not started
+### Validation is inferred, not measured
 
-### 3. Publishing to Etsy
+Etsy validates price against a taxonomy `price` object and per-listing
+`who_made` / `when_made` / `is_supply` fields. Those rules are not currently
+modelled, so a listing that passes local checks may still be rejected by the
+real `createDraftListing` call.
 
-The tool optimizes and stores listings locally; it does not submit them. That
-needs OAuth2 (not just an API key) and the `createDraftListing` endpoint. Scope
-this deliberately — it's a different auth model from everything built so far.
+### Nothing is published
 
-### 4. Real daemon
-
-`watch` runs in the foreground and dies with the terminal. For actual unattended
-operation, wrap it in a launchd plist or just run it under `nohup`/`tmux`.
-
-### 5. Model quality
-
-`phi3:mini` writes usable copy but over-generates tags (15–40 where 13 are
-allowed) and repeats the same phrase reordered. The repair layer handles it
-correctly — every listing is compliant — but a stronger model
-(`llama3.2:3b`, `qwen2.5:7b`) would need less repair. Compare
-`GenerateReport.warnings` across models; fewer warnings per listing = better.
+The tool optimizes and stores listings in local SQLite. It does not submit them
+to Etsy. Publishing requires OAuth 2.0 (PKCE), which is a different auth model
+from the API key — see `references/publishing.md`.
 
 ## Design invariants — keep these
 
-- Idempotent: products upsert on `name`, listings on `product_id`. Re-running
-  anything must stay a no-op.
-- Never silently fall back. If the LLM or the API is unavailable, the run says so.
-- Never ship a listing that violates marketplace limits.
-- Deterministic where possible (fixed seeds, offline estimator).
-- No new dependencies without a reason.
+- **Idempotent.** Products upsert on `name`, listings on `product_id`. Re-running
+  any command must stay a no-op. Running `optimize` twice produces identical
+  prices.
+- **Never silently fall back.** If the LLM or the API is unavailable, the run
+  says so and records why in the decision notes.
+- **Never ship a listing that violates marketplace limits.** Title ≤140 chars,
+  exactly 13 tags, each ≤20 chars — enforced before anything is written.
+- **Never put display text into a query string.** Queries come from
+  `products.search_term`, not from a formatted name.
+- **Deterministic where possible.** Fixed per-product seeds, offline estimator,
+  no wall-clock dependence in pricing.
+- **No new dependencies without a reason.** Concurrency uses
+  `tokio::task::JoinSet`; nothing was added for it.
